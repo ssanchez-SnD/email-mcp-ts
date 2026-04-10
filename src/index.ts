@@ -10,6 +10,55 @@ import { getEmail, getUnreadCount, listFolders, listRecentEmails, searchEmails }
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 
+const requestCounters = new Map<string, { count: number; resetAt: number }>();
+
+type RateLimitOptions = {
+  windowMs: number;
+  limit: number;
+  keyFn: (req: express.Request) => string;
+  message: string;
+};
+
+function createRateLimit({ windowMs, limit, keyFn, message }: RateLimitOptions) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const key = keyFn(req);
+    const now = Date.now();
+    const current = requestCounters.get(key);
+
+    if (!current || now >= current.resetAt) {
+      requestCounters.set(key, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
+
+    if (current.count >= limit) {
+      const retryAfterSeconds = Math.ceil((current.resetAt - now) / 1000);
+      res.setHeader('Retry-After', String(Math.max(retryAfterSeconds, 1)));
+      return res.status(429).json({ error: message });
+    }
+
+    current.count += 1;
+    requestCounters.set(key, current);
+    return next();
+  };
+}
+
+const globalRateLimit = createRateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  keyFn: (req) => req.ip ?? 'unknown-ip',
+  message: 'Too many requests. Please retry later.'
+});
+
+const mcpRateLimit = createRateLimit({
+  windowMs: 60_000,
+  limit: 30,
+  keyFn: (req) => `${req.ip ?? 'unknown-ip'}:${req.header('authorization') ?? 'anonymous'}`,
+  message: 'Rate limit exceeded for MCP endpoint.'
+});
+
+app.use(globalRateLimit);
+app.use(config.mcpPath, mcpRateLimit);
+
 app.use((req, res, next) => {
   if (req.path !== config.mcpPath) return next();
   const auth = req.header('authorization');
@@ -42,10 +91,13 @@ function buildServer() {
 
   server.registerTool('list_recent_emails', {
     title: 'List recent emails',
-    description: 'Lists recent emails from the configured mailbox.',
-    inputSchema: { limit: z.number().int().min(1).max(50).optional() }
-  }, async ({ limit }) => ({
-    content: [{ type: 'text', text: JSON.stringify(await listRecentEmails(limit ?? 10), null, 2) }]
+    description: 'Lists recent emails from the configured mailbox using cursor-based pagination.',
+    inputSchema: {
+      limit: z.number().int().min(1).max(50).optional(),
+      cursor: z.string().max(300).optional()
+    }
+  }, async ({ limit, cursor }) => ({
+    content: [{ type: 'text', text: JSON.stringify(await listRecentEmails(limit ?? 10, cursor), null, 2) }]
   }));
 
   server.registerTool('get_email', {
@@ -58,13 +110,14 @@ function buildServer() {
 
   server.registerTool('search_emails', {
     title: 'Search emails',
-    description: 'Search emails by sender, subject, body text, and/or unread state.',
+    description: 'Search emails by sender, subject, body text, and/or unread state with pagination.',
     inputSchema: {
-      from: z.string().optional(),
-      subject: z.string().optional(),
-      text: z.string().optional(),
+      from: z.string().max(320).optional(),
+      subject: z.string().max(500).optional(),
+      text: z.string().max(4_000).optional(),
       unseen: z.boolean().optional(),
-      limit: z.number().int().min(1).max(50).optional()
+      limit: z.number().int().min(1).max(50).optional(),
+      cursor: z.string().max(300).optional()
     }
   }, async (args) => ({
     content: [{ type: 'text', text: JSON.stringify(await searchEmails(args), null, 2) }]
