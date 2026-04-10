@@ -1,0 +1,13 @@
+services:
+  email-mcp:
+    build: .
+    container_name: email-mcp
+    env_file:
+      - .env
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.email-mcp.rule=Host(`mcp.staffndev.cloud`)"
+      - traefik.http.routers.email-mcp.entrypoints=websecure
+      - traefik.http.routers.email-mcp.tls=true
+      - traefik.http.services.email-mcp.loadbalancer.server.port=3000
