@@ -15,6 +15,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve deploy settings
+        run: |
+          echo "DEPLOY_HOST=${{ secrets.VPS_HOST || vars.VPS_HOST }}" >> "$GITHUB_ENV"
+          echo "DEPLOY_USER=${{ secrets.VPS_USER || vars.VPS_USER }}" >> "$GITHUB_ENV"
+          echo "DEPLOY_KEY<<EOF" >> "$GITHUB_ENV"
+          echo "${{ secrets.VPS_SSH_KEY }}" >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+          echo "DEPLOY_PORT=${{ secrets.VPS_PORT || vars.VPS_PORT || '22' }}" >> "$GITHUB_ENV"
+          echo "DEPLOY_APP_DIR=${{ secrets.APP_DIR || vars.APP_DIR }}" >> "$GITHUB_ENV"
+
+      - name: Validate deploy settings
+        run: |
+          test -n "${DEPLOY_HOST}" || (echo "Missing VPS host (secret/var VPS_HOST)." && exit 1)
+          test -n "${DEPLOY_USER}" || (echo "Missing VPS user (secret/var VPS_USER)." && exit 1)
+          test -n "${DEPLOY_KEY}" || (echo "Missing VPS private key (secret VPS_SSH_KEY)." && exit 1)
+          test -n "${DEPLOY_APP_DIR}" || (echo "Missing app directory (secret/var APP_DIR)." && exit 1)
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -25,7 +42,7 @@ jobs:
           port: ${{ secrets.VPS_PORT || 22 }}
           script: |
             set -e
-            cd ${{ secrets.APP_DIR }}
+            cd ${{ env.DEPLOY_APP_DIR }}
             git pull origin main
             docker compose up -d --build --remove-orphans
             docker image prune -f

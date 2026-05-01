@@ -6,13 +6,20 @@ function required(name: string, fallback?: string) {
   return value;
 }
 
+export function requiredNumber(name: string, fallback: string): number {
+  const raw = required(name, fallback);
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) throw new Error(`Invalid numeric env var: ${name}`);
+  return parsed;
+}
+
 export const config = {
-  port: Number(process.env.PORT ?? '3000'),
+  port: requiredNumber('PORT', '3000'),
   mcpPath: process.env.MCP_PATH ?? '/mcp',
   apiKey: required('API_KEY'),
   imap: {
     host: required('IMAP_HOST'),
-    port: Number(process.env.IMAP_PORT ?? '993'),
+    port: requiredNumber('IMAP_PORT', '993'),
     secure: (process.env.IMAP_SECURE ?? 'true') === 'true',
     auth: {
       user: required('IMAP_USERNAME'),
