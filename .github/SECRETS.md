@@ -7,7 +7,7 @@ Configura estos secrets en tu repositorio:
 |---|---|---|
 | `VPS_HOST` | IP o dominio de tu VPS | `123.45.67.89` o `vps.staffndev.cloud` |
 | `VPS_USER` | Usuario SSH | `deploy` o `root` |
-| `VPS_SSH_KEY` | Clave SSH privada (contenido completo) | `-----BEGIN OPENSSH PRIVATE KEY-----...` |
+| `VPS_SSH_KEY` | **Clave SSH privada** (contenido completo, no la pública) | `-----BEGIN OPENSSH PRIVATE KEY-----...` |
 | `VPS_PORT` | Puerto SSH (opcional, default 22) | `22` |
 | `APP_DIR` | Ruta absoluta del proyecto en el VPS | `/opt/email-mcp-ts` |
 
@@ -45,3 +45,5 @@ cat ~/.ssh/deploy_key
 ## Flujo automático
 
 Cada `git push` a `main` → GitHub Actions → SSH al VPS → `git pull` → `docker compose up -d --build`
+
+> También puedes definir `VPS_HOST`, `VPS_USER`, `VPS_PORT` y `APP_DIR` como **Repository Variables** (Actions → Variables). El workflow primero usa Secrets y luego Variables como fallback.
