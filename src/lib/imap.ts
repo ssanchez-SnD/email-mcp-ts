@@ -212,11 +212,7 @@ export async function searchEmails(query: {
 }): Promise<PaginationResult<EmailSummary>> {
   const limit = query.limit ?? 10;
   return withClient(async (client) => {
-    const search: Record<string, unknown> = {};
-    if (query.from) search.from = query.from;
-    if (query.subject) search.subject = query.subject;
-    if (query.text) search.body = query.text;
-    if (query.unseen) search.seen = false;
+    const search = buildSearchCriteria(query);
 
     const uidsResult = await withTimeout(client.search(search), IMAP_OPERATION_TIMEOUT_MS, 'search');
     const uids = Array.isArray(uidsResult) ? uidsResult : [];
@@ -244,4 +240,18 @@ export async function searchEmails(query: {
 
     return { items, hasMore, nextCursor };
   });
+}
+
+export function buildSearchCriteria(query: {
+  from?: string;
+  subject?: string;
+  text?: string;
+  unseen?: boolean;
+}): Record<string, unknown> {
+  const search: Record<string, unknown> = {};
+  if (query.from) search.from = query.from;
+  if (query.subject) search.subject = query.subject;
+  if (query.text) search.body = query.text;
+  if (typeof query.unseen === 'boolean') search.seen = !query.unseen;
+  return search;
 }
