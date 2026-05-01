@@ -5,11 +5,11 @@ Configura estos secrets en tu repositorio:
 
 | Secret | Descripción | Ejemplo |
 |---|---|---|
-| `VPS_HOST` | IP o dominio de tu VPS | `123.45.67.89` o `vps.staffndev.cloud` |
-| `VPS_USER` | Usuario SSH | `deploy` o `root` |
-| `VPS_SSH_KEY` | Clave SSH privada (contenido completo) | `-----BEGIN OPENSSH PRIVATE KEY-----...` |
-| `VPS_PORT` | Puerto SSH (opcional, default 22) | `22` |
-| `APP_DIR` | Ruta absoluta del proyecto en el VPS | `/opt/email-mcp-ts` |
+| `VPS_SSH_KEY` | **Clave SSH privada** (contenido completo, no la pública) | `-----BEGIN OPENSSH PRIVATE KEY-----...` |
+| `VPS_HOST` | (Opcional) Si prefieres no hardcodear, puedes parametrizar el workflow | `72.60.228.139` |
+| `VPS_USER` | (Opcional) Si prefieres no hardcodear, puedes parametrizar el workflow | `gitci` |
+| `VPS_PORT` | (Opcional) Si prefieres no hardcodear, puedes parametrizar el workflow | `22` |
+| `APP_DIR` | (Opcional) Si prefieres no hardcodear, puedes parametrizar el workflow | `/opt/email-mcp-ts` |
 
 ## Preparar el VPS (una sola vez)
 
@@ -45,3 +45,5 @@ cat ~/.ssh/deploy_key
 ## Flujo automático
 
 Cada `git push` a `main` → GitHub Actions → SSH al VPS → `git pull` → `docker compose up -d --build`
+
+> En la versión actual del workflow, host/usuario/puerto/ruta están definidos directamente en `.github/workflows/deploy.yml`; solo `VPS_SSH_KEY` es obligatorio como secret.
