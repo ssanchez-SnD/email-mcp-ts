@@ -5,7 +5,9 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { config } from './lib/config.js';
-import { getEmail, getUnreadCount, listFolders, listRecentEmails, searchEmails } from './lib/imap.js';
+import { createEmailService } from './lib/email-service.js';
+import { appendRawMessage, deleteEmail, getEmail, getUnreadCount, listFolders, listRecentEmails, moveEmail, searchEmails, updateEmailFlags } from './lib/imap.js';
+import { sendRawMessage } from './lib/smtp.js';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -70,15 +72,36 @@ app.use((req, res, next) => {
 
 const transports: Record<string, StreamableHTTPServerTransport> = {};
 
+const emailService = createEmailService(
+  {
+    listFolders,
+    getEmail,
+    searchEmails,
+    moveEmail,
+    deleteEmail,
+    updateEmailFlags,
+    appendMessage: appendRawMessage,
+    sendRawMessage
+  },
+  {
+    fromAddress: config.smtp.from,
+    defaultMailbox: config.imap.mailbox,
+    sentMailbox: config.mailboxes.sent,
+    draftsMailbox: config.mailboxes.drafts
+  }
+);
+
 function buildServer() {
   const server = new McpServer({ name: 'email-mcp-ts', version: '0.1.0' });
 
   server.registerTool('get_unread_count', {
     title: 'Get unread count',
     description: 'Returns unread and total email counts for the configured mailbox.',
-    inputSchema: {}
-  }, async () => ({
-    content: [{ type: 'text', text: JSON.stringify(await getUnreadCount(), null, 2) }]
+    inputSchema: {
+      mailbox: z.string().max(300).optional()
+    }
+  }, async ({ mailbox }) => ({
+    content: [{ type: 'text', text: JSON.stringify(await getUnreadCount(mailbox), null, 2) }]
   }));
 
   server.registerTool('list_folders', {
@@ -94,18 +117,22 @@ function buildServer() {
     description: 'Lists recent emails from the configured mailbox using cursor-based pagination.',
     inputSchema: {
       limit: z.number().int().min(1).max(50).optional(),
-      cursor: z.string().max(300).optional()
+      cursor: z.string().max(300).optional(),
+      mailbox: z.string().max(300).optional()
     }
-  }, async ({ limit, cursor }) => ({
-    content: [{ type: 'text', text: JSON.stringify(await listRecentEmails(limit ?? 10, cursor), null, 2) }]
+  }, async ({ limit, cursor, mailbox }) => ({
+    content: [{ type: 'text', text: JSON.stringify(await listRecentEmails(limit ?? 10, cursor, mailbox), null, 2) }]
   }));
 
   server.registerTool('get_email', {
     title: 'Get email',
     description: 'Gets the full detail of one email by its IMAP UID.',
-    inputSchema: { uid: z.number().int().positive() }
-  }, async ({ uid }) => ({
-    content: [{ type: 'text', text: JSON.stringify(await getEmail(uid), null, 2) }]
+    inputSchema: {
+      uid: z.number().int().positive(),
+      mailbox: z.string().max(300).optional()
+    }
+  }, async ({ uid, mailbox }) => ({
+    content: [{ type: 'text', text: JSON.stringify(await getEmail(uid, mailbox), null, 2) }]
   }));
 
   server.registerTool('search_emails', {
@@ -113,14 +140,123 @@ function buildServer() {
     description: 'Search emails by sender, subject, body text, and/or unread state with pagination.',
     inputSchema: {
       from: z.string().max(320).optional(),
+      to: z.string().max(320).optional(),
+      cc: z.string().max(320).optional(),
       subject: z.string().max(500).optional(),
       text: z.string().max(4_000).optional(),
       unseen: z.boolean().optional(),
+      flagged: z.boolean().optional(),
+      deleted: z.boolean().optional(),
+      draft: z.boolean().optional(),
+      answered: z.boolean().optional(),
+      after: z.string().max(40).optional(),
+      before: z.string().max(40).optional(),
       limit: z.number().int().min(1).max(50).optional(),
-      cursor: z.string().max(300).optional()
+      cursor: z.string().max(300).optional(),
+      mailboxes: z.array(z.string().max(300)).optional()
     }
   }, async (args) => ({
     content: [{ type: 'text', text: JSON.stringify(await searchEmails(args), null, 2) }]
+  }));
+
+  server.registerTool('move_email', {
+    title: 'Move email',
+    description: 'Moves a message to another IMAP mailbox.',
+    inputSchema: {
+      uid: z.number().int().positive(),
+      mailbox: z.string().max(300).optional(),
+      destinationMailbox: z.string().max(300)
+    }
+  }, async ({ uid, mailbox, destinationMailbox }) => ({
+    content: [{ type: 'text', text: JSON.stringify(await moveEmail(uid, destinationMailbox, mailbox), null, 2) }]
+  }));
+
+  server.registerTool('delete_email', {
+    title: 'Delete email',
+    description: 'Deletes a message from IMAP.',
+    inputSchema: {
+      uid: z.number().int().positive(),
+      mailbox: z.string().max(300).optional()
+    }
+  }, async ({ uid, mailbox }) => ({
+    content: [{ type: 'text', text: JSON.stringify(await deleteEmail(uid, mailbox), null, 2) }]
+  }));
+
+  server.registerTool('update_email_flags', {
+    title: 'Update email flags',
+    description: 'Marks a message as seen, flagged, deleted, draft, or answered.',
+    inputSchema: {
+      uid: z.number().int().positive(),
+      mailbox: z.string().max(300).optional(),
+      seen: z.boolean().optional(),
+      flagged: z.boolean().optional(),
+      deleted: z.boolean().optional(),
+      draft: z.boolean().optional(),
+      answered: z.boolean().optional()
+    }
+  }, async ({ uid, mailbox, ...flags }) => ({
+    content: [{ type: 'text', text: JSON.stringify(await updateEmailFlags(uid, flags, mailbox), null, 2) }]
+  }));
+
+  server.registerTool('create_draft', {
+    title: 'Create draft',
+    description: 'Stores a draft in the resolved Drafts mailbox.',
+    inputSchema: {
+      mailbox: z.string().max(300).optional(),
+      to: z.array(z.string().max(320)).min(1),
+      cc: z.array(z.string().max(320)).optional(),
+      subject: z.string().max(500),
+      text: z.string().max(50_000).optional(),
+      html: z.string().max(200_000).optional(),
+      inReplyTo: z.string().max(500).optional(),
+      references: z.array(z.string().max(500)).optional(),
+      attachments: z.array(z.object({
+        filename: z.string().max(255),
+        contentBase64: z.string().max(5_000_000),
+        contentType: z.string().max(200).optional()
+      })).optional()
+    }
+  }, async ({ attachments, ...args }) => ({
+    content: [{
+      type: 'text',
+      text: JSON.stringify(await emailService.createDraft({
+        ...args,
+        attachments: attachments?.map((attachment) => ({
+          filename: attachment.filename,
+          content: Buffer.from(attachment.contentBase64, 'base64'),
+          contentType: attachment.contentType
+        }))
+      }), null, 2)
+    }]
+  }));
+
+  server.registerTool('reply_email', {
+    title: 'Reply email',
+    description: 'Replies to a message, sends it via SMTP, and stores a copy in Sent.',
+    inputSchema: {
+      mailbox: z.string().max(300).optional(),
+      uid: z.number().int().positive(),
+      replyAll: z.boolean().optional(),
+      text: z.string().max(50_000).optional(),
+      html: z.string().max(200_000).optional(),
+      attachments: z.array(z.object({
+        filename: z.string().max(255),
+        contentBase64: z.string().max(5_000_000),
+        contentType: z.string().max(200).optional()
+      })).optional()
+    }
+  }, async ({ attachments, ...args }) => ({
+    content: [{
+      type: 'text',
+      text: JSON.stringify(await emailService.replyEmail({
+        ...args,
+        attachments: attachments?.map((attachment) => ({
+          filename: attachment.filename,
+          content: Buffer.from(attachment.contentBase64, 'base64'),
+          contentType: attachment.contentType
+        }))
+      }), null, 2)
+    }]
   }));
 
   return server;

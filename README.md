@@ -1,26 +1,31 @@
 # email-mcp-ts
 
-Servidor MCP remoto en TypeScript que expone un buzón IMAP de solo lectura a Perplexity y ChatGPT vía **Streamable HTTP**.
+Servidor MCP remoto en TypeScript que expone un buzon IMAP de lectura y escritura via **Streamable HTTP**.
 
-## Herramientas v1
+## Herramientas
 
-| Tool | Descripción |
+| Tool | Descripcion |
 |---|---|
-| `get_unread_count` | Cuenta de correos no leídos y total en el buzón |
-| `list_recent_emails` | Lista los N correos más recientes (con paginación por cursor) |
-| `search_emails` | Busca por remitente, asunto, texto o estado no leído (con paginación por cursor) |
-| `get_email` | Obtiene el detalle completo de un correo por UID |
-| `list_folders` | Lista carpetas IMAP disponibles |
+| `get_unread_count` | Cuenta de correos no leidos y total en el buzon |
+| `list_recent_emails` | Lista los N correos mas recientes, con paginacion por cursor |
+| `search_emails` | Busca por remitente, destinatario, asunto, texto, flags o carpetas |
+| `get_email` | Obtiene el detalle completo de un correo por UID y carpeta |
+| `list_folders` | Lista carpetas IMAP disponibles con `specialUse` y metadatos |
+| `move_email` | Mueve un correo a otra carpeta |
+| `delete_email` | Elimina un correo |
+| `update_email_flags` | Marca leido/no leido, flag, borrado, draft o answered |
+| `create_draft` | Guarda un borrador en Drafts |
+| `reply_email` | Responde un correo, lo envia por SMTP y guarda copia en Sent |
 
-## Paginación por cursor
+## Paginacion por cursor
 
 `list_recent_emails` y `search_emails` devuelven:
 
-- `items`: resultados de la página actual
-- `hasMore`: indica si hay más correos por consultar
-- `nextCursor`: cursor para pedir la página siguiente
+- `items`: resultados de la pagina actual
+- `hasMore`: indica si hay mas correos por consultar
+- `nextCursor`: cursor para pedir la pagina siguiente
 
-Ejemplo de request:
+Ejemplo:
 
 ```json
 {
@@ -28,19 +33,20 @@ Ejemplo de request:
   "arguments": {
     "subject": "factura",
     "limit": 10,
-    "cursor": "eyJ1aWQiOjEyMzR9"
+    "cursor": "eyJtYWlsYm94IjoiSU5CT1giLCJ1aWQiOjEyMzR9"
   }
 }
 ```
 
 ## Resiliencia y seguridad
 
-- Operaciones IMAP con timeout y reintentos automáticos para errores transitorios
-- Sanitización real de HTML al devolver `htmlBodySanitized`
-- Rate limiting global y específico para endpoint MCP
-- Autenticación por `Authorization: Bearer <API_KEY>`
+- Operaciones IMAP con timeout y reintentos automaticos para errores transitorios
+- Sanitizacion de HTML al devolver `htmlBodySanitized`
+- Rate limiting global y especifico para endpoint MCP
+- Autenticacion por `Authorization: Bearer <API_KEY>`
+- Los secretos solo se leen desde variables de entorno y no se imprimen en logs
 
-## Configuración
+## Configuracion
 
 Copia `.env.example` a `.env` y rellena las variables.
 
@@ -52,6 +58,9 @@ Variables relevantes:
 - `IMAP_HOST`, `IMAP_PORT`, `IMAP_SECURE`
 - `IMAP_USERNAME`, `IMAP_PASSWORD`
 - `IMAP_MAILBOX` (default `INBOX`)
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`
+- `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`
+- `SENT_MAILBOX`, `DRAFTS_MAILBOX`, `TRASH_MAILBOX` (opcionales, si el servidor no expone `specialUse`)
 
 ## Desarrollo local
 
@@ -60,7 +69,7 @@ npm install
 npm run dev
 ```
 
-## Producción con Docker
+## Produccion con Docker
 
 ```bash
 docker compose up -d --build
@@ -69,5 +78,6 @@ docker compose up -d --build
 ## Seguridad
 
 - Nunca subas `.env` al repositorio
-- Usa HTTPS en producción (Traefik + Let's Encrypt)
-- Rota el `API_KEY` periódicamente
+- No imprimas ni registres `API_KEY`, `IMAP_PASSWORD` ni credenciales SMTP
+- Usa HTTPS en produccion (Traefik + Let's Encrypt)
+- Rota el `API_KEY` periodicamente

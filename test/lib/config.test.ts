@@ -6,6 +6,10 @@ function seedRequiredEnv() {
   process.env.IMAP_HOST = 'imap.example.com';
   process.env.IMAP_USERNAME = 'user';
   process.env.IMAP_PASSWORD = 'pass';
+  process.env.SMTP_HOST = 'smtp.example.com';
+  process.env.SMTP_USERNAME = 'smtp-user';
+  process.env.SMTP_PASSWORD = 'smtp-pass';
+  process.env.SMTP_FROM = 'agent@example.com';
 }
 
 test('requiredNumber parses valid numeric env var', async () => {

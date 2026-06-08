@@ -1,4 +1,23 @@
-import 'dotenv/config';
+import fs from 'node:fs';
+import path from 'node:path';
+
+function loadDotEnvFile() {
+  const envPath = path.resolve(process.cwd(), '.env');
+  if (!fs.existsSync(envPath)) return;
+  const content = fs.readFileSync(envPath, 'utf8');
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const match = trimmed.match(/^([A-Z0-9_]+)\s*=\s*(.*)$/i);
+    if (!match) continue;
+    const [, key, rawValue] = match;
+    if (process.env[key] !== undefined) continue;
+    const value = rawValue.replace(/^['"]|['"]$/g, '');
+    process.env[key] = value;
+  }
+}
+
+loadDotEnvFile();
 
 function required(name: string, fallback?: string) {
   const value = process.env[name] ?? fallback;
@@ -26,5 +45,19 @@ export const config = {
       pass: required('IMAP_PASSWORD')
     },
     mailbox: process.env.IMAP_MAILBOX ?? 'INBOX'
+  },
+  smtp: {
+    host: required('SMTP_HOST'),
+    port: requiredNumber('SMTP_PORT', '465'),
+    secure: (process.env.SMTP_SECURE ?? 'true') === 'true',
+    user: required('SMTP_USERNAME'),
+    pass: required('SMTP_PASSWORD'),
+    from: required('SMTP_FROM'),
+    ehloHost: process.env.SMTP_EHLO_HOST ?? 'localhost'
+  },
+  mailboxes: {
+    sent: process.env.SENT_MAILBOX ?? null,
+    drafts: process.env.DRAFTS_MAILBOX ?? null,
+    trash: process.env.TRASH_MAILBOX ?? null
   }
 };
