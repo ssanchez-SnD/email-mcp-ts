@@ -1,66 +1,46 @@
 # email-mcp-ts
 
-Servidor MCP remoto en TypeScript que expone un buzon IMAP de lectura y escritura via **Streamable HTTP**.
+Servidor MCP remoto en TypeScript para correo IMAP/SMTP con lectura y escritura. Expone herramientas para consultar, buscar, mover, eliminar, marcar, crear borradores y responder mensajes, guardando copias enviadas en la carpeta `Sent` del servidor.
+
+## Estado
+
+- Soporta lectura de buzón, detalle de mensajes, búsqueda y paginación.
+- Soporta escritura segura: mover, borrar, actualizar flags, crear borradores y responder por SMTP.
+- Resuelve carpetas especiales como `Sent` y `Drafts` por `specialUse`, con respaldo por configuración.
+- Validado contra un servidor real con autenticación IMAP y SMTP.
 
 ## Herramientas
 
-| Tool | Descripcion |
+| Tool | Descripción |
 |---|---|
-| `get_unread_count` | Cuenta de correos no leidos y total en el buzon |
-| `list_recent_emails` | Lista los N correos mas recientes, con paginacion por cursor |
+| `get_unread_count` | Devuelve total y no leídos del buzón configurado |
+| `list_folders` | Lista carpetas IMAP con metadatos y `specialUse` |
+| `list_recent_emails` | Lista correos recientes con cursor |
+| `get_email` | Devuelve el detalle completo de un mensaje |
 | `search_emails` | Busca por remitente, destinatario, asunto, texto, flags o carpetas |
-| `get_email` | Obtiene el detalle completo de un correo por UID y carpeta |
-| `list_folders` | Lista carpetas IMAP disponibles con `specialUse` y metadatos |
 | `move_email` | Mueve un correo a otra carpeta |
 | `delete_email` | Elimina un correo |
-| `update_email_flags` | Marca leido/no leido, flag, borrado, draft o answered |
-| `create_draft` | Guarda un borrador en Drafts |
-| `reply_email` | Responde un correo, lo envia por SMTP y guarda copia en Sent |
+| `update_email_flags` | Marca `seen`, `flagged`, `deleted`, `draft` o `answered` |
+| `create_draft` | Guarda un borrador en `Drafts` |
+| `reply_email` | Responde por SMTP y guarda copia en `Sent` |
 
-## Paginacion por cursor
+## Requisitos
 
-`list_recent_emails` y `search_emails` devuelven:
+- Node.js 22+
+- Acceso IMAP y SMTP al servidor de correo
+- Variables de entorno para credenciales y carpetas especiales
 
-- `items`: resultados de la pagina actual
-- `hasMore`: indica si hay mas correos por consultar
-- `nextCursor`: cursor para pedir la pagina siguiente
+## Configuración
 
-Ejemplo:
+Copiar `.env.example` a `.env` y completar los valores.
 
-```json
-{
-  "tool": "search_emails",
-  "arguments": {
-    "subject": "factura",
-    "limit": 10,
-    "cursor": "eyJtYWlsYm94IjoiSU5CT1giLCJ1aWQiOjEyMzR9"
-  }
-}
-```
+Variables importantes:
 
-## Resiliencia y seguridad
-
-- Operaciones IMAP con timeout y reintentos automaticos para errores transitorios
-- Sanitizacion de HTML al devolver `htmlBodySanitized`
-- Rate limiting global y especifico para endpoint MCP
-- Autenticacion por `Authorization: Bearer <API_KEY>`
-- Los secretos solo se leen desde variables de entorno y no se imprimen en logs
-
-## Configuracion
-
-Copia `.env.example` a `.env` y rellena las variables.
-
-Variables relevantes:
-
-- `PORT` (default `3000`)
-- `MCP_PATH` (default `/mcp`)
-- `API_KEY` (obligatoria)
-- `IMAP_HOST`, `IMAP_PORT`, `IMAP_SECURE`
-- `IMAP_USERNAME`, `IMAP_PASSWORD`
-- `IMAP_MAILBOX` (default `INBOX`)
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`
-- `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`
-- `SENT_MAILBOX`, `DRAFTS_MAILBOX`, `TRASH_MAILBOX` (opcionales, si el servidor no expone `specialUse`)
+- `PORT` y `MCP_PATH`
+- `API_KEY`
+- `IMAP_HOST`, `IMAP_PORT`, `IMAP_SECURE`, `IMAP_USERNAME`, `IMAP_PASSWORD`, `IMAP_MAILBOX`
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`
+- `SENT_MAILBOX`, `DRAFTS_MAILBOX`, `TRASH_MAILBOX` si el servidor no expone `specialUse`
 
 ## Desarrollo local
 
@@ -69,7 +49,7 @@ npm install
 npm run dev
 ```
 
-## Produccion con Docker
+## Producción con Docker
 
 ```bash
 docker compose up -d --build
@@ -78,6 +58,17 @@ docker compose up -d --build
 ## Seguridad
 
 - Nunca subas `.env` al repositorio
-- No imprimas ni registres `API_KEY`, `IMAP_PASSWORD` ni credenciales SMTP
-- Usa HTTPS en produccion (Traefik + Let's Encrypt)
-- Rota el `API_KEY` periodicamente
+- No imprimas `API_KEY`, `IMAP_PASSWORD` ni credenciales SMTP
+- Usa HTTPS en producción
+- Rota las credenciales periódicamente
+
+## Validación
+
+La implementación fue verificada con pruebas sobre un buzón real para confirmar:
+
+- autenticación IMAP y SMTP
+- resolución de carpetas `Sent` y `Drafts`
+- búsqueda y lectura de mensajes
+- movimiento, borrado y actualización de flags
+- creación de borradores
+- envío de respuestas con copia guardada en `Sent`
