@@ -1,6 +1,7 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { config } from './config.js';
+import { compareSearchOrder, decodeSearchCursor, encodeSearchCursor, isOlderThanCursor, type SearchCursor } from './search-cursor.js';
 import { buildSearchCriteria as buildQueryCriteria, type SearchQuery } from './query.js';
 
 export type EmailSummary = {
@@ -72,22 +73,6 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
     }
   }
   throw lastError instanceof Error ? lastError : new Error('Unknown IMAP error');
-}
-
-function encodeCursor(cursor: { mailbox: string; uid: number }): string {
-  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
-}
-
-function decodeCursor(cursor?: string): { mailbox: string; uid: number } | null {
-  if (!cursor) return null;
-  try {
-    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { mailbox?: unknown; uid?: unknown };
-    return typeof parsed.mailbox === 'string' && typeof parsed.uid === 'number' && parsed.uid > 0
-      ? { mailbox: parsed.mailbox, uid: parsed.uid }
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 async function withClient<T>(fn: (client: ImapFlow) => Promise<T>) {
@@ -187,7 +172,7 @@ export async function listRecentEmails(limit = 10, cursor?: string, mailbox = co
   return withMailbox(mailbox, async (client) => {
     const allUidsResult = await withTimeout(client.search({ all: true }, { uid: true }), IMAP_OPERATION_TIMEOUT_MS, 'search-recent-uids');
     const allUids = Array.isArray(allUidsResult) ? allUidsResult : [];
-    const cursorUid = decodeCursor(cursor);
+    const cursorUid = decodeSearchCursor(cursor);
     const eligibleUids = cursorUid ? allUids.filter((uid: number) => uid < cursorUid.uid) : allUids;
     const selected = eligibleUids.slice(-limit);
 
@@ -199,7 +184,7 @@ export async function listRecentEmails(limit = 10, cursor?: string, mailbox = co
 
     const items = out.sort((a, b) => b.uid - a.uid);
     const hasMore = eligibleUids.length > selected.length;
-    const nextCursor = hasMore && items.length > 0 ? encodeCursor({ mailbox, uid: items[items.length - 1].uid }) : null;
+    const nextCursor = hasMore && items.length > 0 ? encodeSearchCursor({ mailbox, uid: items[items.length - 1].uid }) : null;
 
     return { items, hasMore, nextCursor };
   });
@@ -240,52 +225,45 @@ export async function getEmail(uid: number, mailbox = config.imap.mailbox): Prom
   });
 }
 
-async function searchMailbox(mailbox: string, searchCriteria: Record<string, unknown>, limit: number, cursor?: { mailbox: string; uid: number } | null) {
+async function searchMailbox(mailbox: string, searchCriteria: Record<string, unknown>, cursor?: SearchCursor | null) {
   return withMailbox(mailbox, async (client) => {
     const uidsResult = await withTimeout(client.search(searchCriteria as never, { uid: true }), IMAP_OPERATION_TIMEOUT_MS, 'search');
     const uids = Array.isArray(uidsResult) ? uidsResult : [];
-    const eligibleUids = cursor && cursor.mailbox === mailbox ? uids.filter((uid: number) => uid < cursor.uid) : uids;
-    const selected = eligibleUids.slice(-limit);
-
     const results: EmailSummary[] = [];
-    for (const uid of selected) {
+    for (const uid of uids) {
       const item = await fetchMessageSummary(client, mailbox, uid);
-      if (item) results.push(item);
+      if (item && isOlderThanCursor(item, cursor)) results.push(item);
     }
 
-    return {
-      items: results,
-      hasMore: eligibleUids.length > selected.length,
-      nextCursor: results.length ? encodeCursor({ mailbox, uid: results[results.length - 1].uid }) : null
-    };
+    return results;
   });
 }
 
 export async function searchEmails(query: SearchQuery): Promise<PaginationResult<EmailSummary>> {
   const limit = query.limit ?? 10;
-  const cursor = decodeCursor(query.cursor);
+  const cursor = decodeSearchCursor(query.cursor);
   const search = buildQueryCriteria(query);
   const { mailboxes: _ignored, ...criteria } = search;
   const mailboxes = query.mailboxes?.length ? query.mailboxes : [config.imap.mailbox];
 
   const allResults: EmailSummary[] = [];
   for (const mailbox of mailboxes) {
-    const page = await searchMailbox(mailbox, criteria, limit, cursor);
-    allResults.push(...page.items);
+    const mailboxResults = await searchMailbox(mailbox, criteria, cursor);
+    allResults.push(...mailboxResults);
   }
 
-  const items = allResults.sort((a, b) => {
-    const dateA = a.date ? Date.parse(a.date) : 0;
-    const dateB = b.date ? Date.parse(b.date) : 0;
-    if (dateA !== dateB) return dateB - dateA;
-    if (a.mailbox !== b.mailbox) return a.mailbox.localeCompare(b.mailbox);
-    return b.uid - a.uid;
-  }).slice(0, limit);
+  const items = allResults.sort(compareSearchOrder).slice(0, limit);
 
   return {
     items,
     hasMore: allResults.length > items.length,
-    nextCursor: items.length ? encodeCursor({ mailbox: items[items.length - 1].mailbox, uid: items[items.length - 1].uid }) : null
+    nextCursor: items.length
+      ? encodeSearchCursor({
+          mailbox: items[items.length - 1].mailbox,
+          uid: items[items.length - 1].uid,
+          date: items[items.length - 1].date
+        })
+      : null
   };
 }
 

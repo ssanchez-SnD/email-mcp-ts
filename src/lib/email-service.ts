@@ -1,19 +1,20 @@
 import { composeEmailMessage, type AttachmentInput } from './mime.js';
 import { resolveSpecialUseFolders, type MailboxDescriptor } from './mailboxes.js';
-import type { EmailDetail, EmailSummary, PaginationResult, SearchQuery } from './imap.js';
+import type { EmailDetail, EmailSummary, PaginationResult } from './imap.js';
+import type { SearchQuery } from './query.js';
 
 export type EmailWriteDeps = {
   listFolders: () => Promise<MailboxDescriptor[]>;
-  getEmail: (mailbox: string, uid: number) => Promise<EmailDetail | null>;
+  getEmail: (uid: number, mailbox?: string) => Promise<EmailDetail | null>;
   searchEmails: (query: SearchQuery) => Promise<PaginationResult<EmailSummary>>;
-  moveEmail: (mailbox: string, uid: number, destination: string) => Promise<void>;
-  deleteEmail: (mailbox: string, uid: number) => Promise<void>;
+  moveEmail: (uid: number, destination: string, mailbox?: string) => Promise<{ ok: boolean }>;
+  deleteEmail: (uid: number, mailbox?: string) => Promise<{ ok: boolean }>;
   updateEmailFlags: (
-    mailbox: string,
     uid: number,
-    flags: { seen?: boolean; flagged?: boolean; deleted?: boolean; draft?: boolean; answered?: boolean }
-  ) => Promise<void>;
-  appendMessage: (mailbox: string, rawMessage: string, flags?: string[]) => Promise<void>;
+    flags: { seen?: boolean; flagged?: boolean; deleted?: boolean; draft?: boolean; answered?: boolean },
+    mailbox?: string
+  ) => Promise<{ ok: boolean }>;
+  appendMessage: (mailbox: string, rawMessage: string, flags?: string[]) => Promise<{ ok: boolean }>;
   sendRawMessage: (rawMessage: string) => Promise<void>;
 };
 
@@ -42,16 +43,16 @@ export function createEmailService(deps: EmailWriteDeps, config: EmailWriteConfi
   }
 
   async function getEmail(mailbox: string, uid: number) {
-    return deps.getEmail(mailbox, uid);
+    return deps.getEmail(uid, mailbox);
   }
 
   async function moveEmail(mailbox: string, uid: number, destination: string) {
-    await deps.moveEmail(mailbox, uid, destination);
+    await deps.moveEmail(uid, destination, mailbox);
     return { ok: true };
   }
 
   async function deleteEmail(mailbox: string, uid: number) {
-    await deps.deleteEmail(mailbox, uid);
+    await deps.deleteEmail(uid, mailbox);
     return { ok: true };
   }
 
@@ -60,7 +61,7 @@ export function createEmailService(deps: EmailWriteDeps, config: EmailWriteConfi
     uid: number,
     flags: { seen?: boolean; flagged?: boolean; deleted?: boolean; draft?: boolean; answered?: boolean }
   ) {
-    await deps.updateEmailFlags(mailbox, uid, flags);
+    await deps.updateEmailFlags(uid, flags, mailbox);
     return { ok: true };
   }
 
@@ -104,7 +105,7 @@ export function createEmailService(deps: EmailWriteDeps, config: EmailWriteConfi
     attachments?: AttachmentInput[];
   }) {
     const mailbox = input.mailbox ?? config.defaultMailbox;
-    const original = await deps.getEmail(mailbox, input.uid);
+    const original = await deps.getEmail(input.uid, mailbox);
     if (!original) throw new Error('Original email not found');
 
     const folders = await listFolders();
@@ -127,7 +128,7 @@ export function createEmailService(deps: EmailWriteDeps, config: EmailWriteConfi
 
     await deps.sendRawMessage(raw);
     await deps.appendMessage(sentMailbox, raw, ['\\Seen']);
-    await deps.updateEmailFlags(mailbox, input.uid, { answered: true });
+    await deps.updateEmailFlags(input.uid, { answered: true }, mailbox);
     return { mailbox: sentMailbox, ok: true };
   }
 

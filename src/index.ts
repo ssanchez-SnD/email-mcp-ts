@@ -10,6 +10,7 @@ import { appendRawMessage, deleteEmail, getEmail, getUnreadCount, listFolders, l
 import { sendRawMessage } from './lib/smtp.js';
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '1mb' }));
 
 const requestCounters = new Map<string, { count: number; resetAt: number }>();

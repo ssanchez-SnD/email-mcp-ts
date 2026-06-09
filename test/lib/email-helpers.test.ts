@@ -44,8 +44,8 @@ test('composeEmailMessage includes threading headers and attachments', async () 
     from: 'agent@example.com',
     to: ['person@example.com'],
     subject: 'Re: Invoice',
-    text: 'Thanks',
-    html: '<p>Thanks</p>',
+    text: 'Gracias, señor',
+    html: '<p>Gracias, señor</p>',
     inReplyTo: '<message-id@example.com>',
     references: ['<root@example.com>', '<message-id@example.com>'],
     attachments: [
@@ -61,6 +61,8 @@ test('composeEmailMessage includes threading headers and attachments', async () 
   assert.match(raw, /References: <root@example.com> <message-id@example.com>/i);
   assert.match(raw, /multipart\/mixed/i);
   assert.match(raw, /multipart\/alternative/i);
+  assert.match(raw, /Content-Transfer-Encoding: base64/i);
+  assert.doesNotMatch(raw, /Content-Transfer-Encoding: 7bit/i);
   assert.match(raw, /filename="?report\.pdf"?/i);
   assert.match(raw, /Content-Type: text\/html/i);
 });

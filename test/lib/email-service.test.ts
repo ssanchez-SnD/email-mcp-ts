@@ -33,7 +33,7 @@ test('replyEmail sends the message, stores a copy in Sent, and marks the origina
       searchEmails: async () => ({ items: [], hasMore: false, nextCursor: null }),
       moveEmail: async () => undefined,
       deleteEmail: async () => undefined,
-      updateEmailFlags: async (mailbox, uid, flags) => {
+      updateEmailFlags: async (uid, flags, mailbox) => {
         calls.push({ type: 'updateFlags', mailbox, uid, flags });
       },
       appendMessage: async (mailbox, raw, flags) => {

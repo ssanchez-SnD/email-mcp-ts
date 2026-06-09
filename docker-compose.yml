@@ -1,9 +1,13 @@
 services:
   email-mcp:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: email-mcp
     env_file:
       - .env
+    ports:
+      - "3000:3000"
     restart: unless-stopped
     labels:
       - traefik.enable=true

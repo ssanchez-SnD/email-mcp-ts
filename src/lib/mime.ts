@@ -28,12 +28,12 @@ function boundary(prefix: string) {
   return `${prefix}_${randomBytes(8).toString('hex')}`;
 }
 
-function encodePart(contentType: string, body: string) {
+function encodeUtf8Part(contentType: string, body: string) {
   return [
     `Content-Type: ${contentType}; charset=utf-8`,
-    'Content-Transfer-Encoding: 7bit',
+    'Content-Transfer-Encoding: base64',
     '',
-    body
+    wrapBase64(Buffer.from(body, 'utf8').toString('base64'))
   ].join('\r\n');
 }
 
@@ -78,14 +78,14 @@ export async function composeEmailMessage(input: ComposeEmailInput): Promise<str
       lines.push(`Content-Type: multipart/alternative; boundary="${altBoundary}"`);
       lines.push('');
       lines.push(`--${altBoundary}`);
-      lines.push(encodePart('text/plain', input.text ?? ''));
+      lines.push(encodeUtf8Part('text/plain', input.text ?? ''));
       lines.push(`--${altBoundary}`);
-      lines.push(encodePart('text/html', input.html ?? ''));
+      lines.push(encodeUtf8Part('text/html', input.html ?? ''));
       lines.push(`--${altBoundary}--`);
     } else if (hasHtml) {
-      lines.push(encodePart('text/html', input.html ?? ''));
+      lines.push(encodeUtf8Part('text/html', input.html ?? ''));
     } else {
-      lines.push(encodePart('text/plain', input.text ?? ''));
+      lines.push(encodeUtf8Part('text/plain', input.text ?? ''));
     }
 
     for (const attachment of input.attachments ?? []) {
@@ -100,24 +100,18 @@ export async function composeEmailMessage(input: ComposeEmailInput): Promise<str
     lines.push(`Content-Type: multipart/alternative; boundary="${altBoundary}"`);
     lines.push('');
     lines.push(`--${altBoundary}`);
-    lines.push(encodePart('text/plain', input.text ?? ''));
+    lines.push(encodeUtf8Part('text/plain', input.text ?? ''));
     lines.push(`--${altBoundary}`);
-    lines.push(encodePart('text/html', input.html ?? ''));
+    lines.push(encodeUtf8Part('text/html', input.html ?? ''));
     lines.push(`--${altBoundary}--`);
     return lines.join('\r\n');
   }
 
   if (hasHtml) {
-    lines.push('Content-Type: text/html; charset=utf-8');
-    lines.push('Content-Transfer-Encoding: 7bit');
-    lines.push('');
-    lines.push(input.html ?? '');
+    lines.push(encodeUtf8Part('text/html', input.html ?? ''));
     return lines.join('\r\n');
   }
 
-  lines.push('Content-Type: text/plain; charset=utf-8');
-  lines.push('Content-Transfer-Encoding: 7bit');
-  lines.push('');
-  lines.push(input.text ?? '');
+  lines.push(encodeUtf8Part('text/plain', input.text ?? ''));
   return lines.join('\r\n');
 }
