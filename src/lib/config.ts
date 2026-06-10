@@ -25,6 +25,19 @@ function required(name: string, fallback?: string) {
   return value;
 }
 
+function parseTrustProxy(rawValue?: string): boolean | number {
+  if (rawValue === undefined || rawValue.trim() === '') return false;
+
+  const normalized = rawValue.trim().toLowerCase();
+  if (['false', 'off', 'no', '0'].includes(normalized)) return false;
+  if (['true', 'on', 'yes'].includes(normalized)) return true;
+
+  const parsed = Number(normalized);
+  if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+
+  throw new Error('Invalid TRUST_PROXY env var');
+}
+
 export function requiredNumber(name: string, fallback: string): number {
   const raw = required(name, fallback);
   const parsed = Number(raw);
@@ -35,6 +48,7 @@ export function requiredNumber(name: string, fallback: string): number {
 export const config = {
   port: requiredNumber('PORT', '3000'),
   mcpPath: process.env.MCP_PATH ?? '/mcp',
+  trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
   apiKey: required('API_KEY'),
   imap: {
     host: required('IMAP_HOST'),
