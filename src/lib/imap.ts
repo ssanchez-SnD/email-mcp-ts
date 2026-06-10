@@ -1,6 +1,7 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { config } from './config.js';
+import { sanitizeEmailHtml } from './html.js';
 import { compareSearchOrder, decodeSearchCursor, encodeSearchCursor, isOlderThanCursor, type SearchCursor } from './search-cursor.js';
 import { buildSearchCriteria as buildQueryCriteria, type SearchQuery } from './query.js';
 
@@ -108,24 +109,6 @@ function summarizeText(input?: string | null, max = 220) {
   return clean.length > max ? `${clean.slice(0, max)}...` : clean;
 }
 
-function sanitizeEmailHtml(html: string | null | undefined): string | null {
-  if (typeof html !== 'string') return null;
-  let sanitized = html;
-
-  sanitized = sanitized.replace(/<\s*(script|style|iframe|object|embed|link|meta)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '');
-  sanitized = sanitized.replace(/<\s*(script|style|iframe|object|embed|link|meta)[^>]*\/?\s*>/gi, '');
-  sanitized = sanitized.replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
-  sanitized = sanitized.replace(/\s(href|src)\s*=\s*("|')\s*javascript:[^"']*("|')/gi, '');
-  sanitized = sanitized.replace(/\s(href|src)\s*=\s*javascript:[^\s>]*/gi, '');
-  sanitized = sanitized.replace(/<a\b([^>]*)>/gi, (_match, attrs) => {
-    const hasRel = /\brel\s*=/.test(attrs);
-    if (hasRel) return `<a${attrs}>`;
-    return `<a${attrs} rel="noopener noreferrer nofollow">`;
-  });
-
-  return sanitized;
-}
-
 function mapMailboxes(mailboxes: MailboxInfo[]) {
   return mailboxes.map((box) => ({
     path: box.path,
@@ -138,20 +121,19 @@ function mapMailboxes(mailboxes: MailboxInfo[]) {
 }
 
 async function fetchMessageSummary(client: ImapFlow, mailbox: string, uid: number): Promise<EmailSummary | null> {
-  for await (const msg of client.fetch(String(uid), { uid: true, envelope: true, flags: true, source: true })) {
-    const parsed = await simpleParser(msg.source);
-    return {
-      uid: msg.uid,
-      mailbox,
-      messageId: parsed.messageId ?? null,
-      from: parsed.from?.text ?? '',
-      subject: parsed.subject ?? '(sin asunto)',
-      date: parsed.date?.toISOString() ?? null,
-      isUnread: !msg.flags?.has('\\Seen'),
-      snippet: summarizeText(parsed.text)
-    };
-  }
-  return null;
+  const msg = await client.fetchOne(uid, { envelope: true, flags: true, source: true }, { uid: true });
+  if (!msg || !msg.source) return null;
+  const parsed = await simpleParser(msg.source);
+  return {
+    uid: msg.uid,
+    mailbox,
+    messageId: parsed.messageId ?? null,
+    from: parsed.from?.text ?? '',
+    subject: parsed.subject ?? '(sin asunto)',
+    date: parsed.date?.toISOString() ?? null,
+    isUnread: !msg.flags?.has('\\Seen'),
+    snippet: summarizeText(parsed.text)
+  };
 }
 
 export async function getUnreadCount(mailbox = config.imap.mailbox) {
@@ -192,36 +174,35 @@ export async function listRecentEmails(limit = 10, cursor?: string, mailbox = co
 
 export async function getEmail(uid: number, mailbox = config.imap.mailbox): Promise<EmailDetail | null> {
   return withMailbox(mailbox, async (client) => {
-    for await (const msg of client.fetch(String(uid), { uid: true, envelope: true, flags: true, source: true })) {
-      const parsed = await simpleParser(msg.source);
-      return {
-        uid: msg.uid,
-        mailbox,
-        messageId: parsed.messageId ?? null,
-        from: parsed.from?.text ?? '',
-        to: parsed.to?.value.map((v: { address?: string | null }) => v.address ?? '').filter(Boolean) ?? [],
-        cc: parsed.cc?.value.map((v: { address?: string | null }) => v.address ?? '').filter(Boolean) ?? [],
-        subject: parsed.subject ?? '(sin asunto)',
-        date: parsed.date?.toISOString() ?? null,
-        isUnread: !msg.flags?.has('\\Seen'),
-        snippet: summarizeText(parsed.text),
-        flags: Array.from(msg.flags ?? []).map(String),
-        textBody: parsed.text ?? '',
-        htmlBodySanitized: sanitizeEmailHtml(typeof parsed.html === 'string' ? parsed.html : null),
-        attachments: parsed.attachments.map((a: { filename?: string | null; contentType: string; size?: number | null }) => ({
-          filename: a.filename ?? 'attachment',
-          mimeType: a.contentType,
-          sizeBytes: a.size ?? 0
-        })),
-        inReplyTo: parsed.inReplyTo ?? null,
-        references: Array.isArray(parsed.references)
-          ? parsed.references
-          : typeof parsed.references === 'string'
-            ? parsed.references.split(/\s+/).filter(Boolean)
-            : []
-      };
-    }
-    return null;
+    const msg = await client.fetchOne(uid, { envelope: true, flags: true, source: true }, { uid: true });
+    if (!msg || !msg.source) return null;
+    const parsed = await simpleParser(msg.source);
+    return {
+      uid: msg.uid,
+      mailbox,
+      messageId: parsed.messageId ?? null,
+      from: parsed.from?.text ?? '',
+      to: parsed.to?.value.map((v: { address?: string | null }) => v.address ?? '').filter(Boolean) ?? [],
+      cc: parsed.cc?.value.map((v: { address?: string | null }) => v.address ?? '').filter(Boolean) ?? [],
+      subject: parsed.subject ?? '(sin asunto)',
+      date: parsed.date?.toISOString() ?? null,
+      isUnread: !msg.flags?.has('\\Seen'),
+      snippet: summarizeText(parsed.text),
+      flags: Array.from(msg.flags ?? []).map(String),
+      textBody: parsed.text ?? '',
+      htmlBodySanitized: sanitizeEmailHtml(typeof parsed.html === 'string' ? parsed.html : null),
+      attachments: parsed.attachments.map((a: { filename?: string | null; contentType: string; size?: number | null }) => ({
+        filename: a.filename ?? 'attachment',
+        mimeType: a.contentType,
+        sizeBytes: a.size ?? 0
+      })),
+      inReplyTo: parsed.inReplyTo ?? null,
+      references: Array.isArray(parsed.references)
+        ? parsed.references
+        : typeof parsed.references === 'string'
+          ? parsed.references.split(/\s+/).filter(Boolean)
+          : []
+    };
   });
 }
 

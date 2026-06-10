@@ -2,6 +2,9 @@ import net from 'node:net';
 import tls from 'node:tls';
 import { config } from './config.js';
 
+const SMTP_CONNECT_TIMEOUT_MS = 10_000;
+const SMTP_RESPONSE_TIMEOUT_MS = 10_000;
+
 function parseResponse(chunk: string) {
   const lines = chunk.trimEnd().split(/\r?\n/);
   const last = lines.at(-1) ?? '';
@@ -12,21 +15,38 @@ function parseResponse(chunk: string) {
   };
 }
 
-async function waitForConnection(socket: net.Socket | tls.TLSSocket) {
+function destroySocket(socket: net.Socket | tls.TLSSocket, error?: Error) {
+  if (socket.destroyed) return;
+  socket.destroy(error);
+}
+
+export async function waitForConnection(socket: net.Socket | tls.TLSSocket, timeoutMs = SMTP_CONNECT_TIMEOUT_MS) {
   await new Promise<void>((resolve, reject) => {
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const onConnect = () => {
-      cleanup();
-      resolve();
-    };
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
     const cleanup = () => {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
       socket.off('error', onError);
       socket.off('connect', onConnect);
       socket.off('secureConnect', onConnect);
     };
+
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    const onConnect = () => {
+      cleanup();
+      resolve();
+    };
+
+    timeoutHandle = setTimeout(() => {
+      const timeoutError = new Error(`SMTP connection timeout after ${timeoutMs}ms`);
+      cleanup();
+      destroySocket(socket, timeoutError);
+      reject(timeoutError);
+    }, timeoutMs);
 
     socket.on('error', onError);
     socket.on('connect', onConnect);
@@ -34,9 +54,10 @@ async function waitForConnection(socket: net.Socket | tls.TLSSocket) {
   });
 }
 
-async function readResponse(socket: net.Socket | tls.TLSSocket) {
+export async function readResponse(socket: net.Socket | tls.TLSSocket, timeoutMs = SMTP_RESPONSE_TIMEOUT_MS) {
   return new Promise<{ code: number; lines: string[] }>((resolve, reject) => {
     let buffer = '';
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
     const onData = (chunk: Buffer) => {
       buffer += chunk.toString('utf8');
@@ -54,9 +75,17 @@ async function readResponse(socket: net.Socket | tls.TLSSocket) {
     };
 
     const cleanup = () => {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
       socket.off('data', onData);
       socket.off('error', onError);
     };
+
+    timeoutHandle = setTimeout(() => {
+      const timeoutError = new Error(`SMTP read timeout after ${timeoutMs}ms`);
+      cleanup();
+      destroySocket(socket, timeoutError);
+      reject(timeoutError);
+    }, timeoutMs);
 
     socket.on('data', onData);
     socket.on('error', onError);
@@ -99,44 +128,50 @@ export async function sendRawMessage(rawMessage: string) {
     ? tls.connect({ host: config.smtp.host, port, servername: config.smtp.host })
     : net.connect({ host: config.smtp.host, port });
 
-  await waitForConnection(socket);
-  socket.setEncoding('utf8');
+  try {
+    await waitForConnection(socket, SMTP_CONNECT_TIMEOUT_MS);
+    socket.setEncoding('utf8');
 
-  const greeting = await readResponse(socket);
-  if (greeting.code !== 220) throw new Error(`SMTP greeting failed: ${greeting.lines.at(-1) ?? 'unknown'}`);
+    const greeting = await readResponse(socket, SMTP_RESPONSE_TIMEOUT_MS);
+    if (greeting.code !== 220) throw new Error(`SMTP greeting failed: ${greeting.lines.at(-1) ?? 'unknown'}`);
 
-  await writeCommand(socket, `EHLO ${config.smtp.ehloHost}`);
-  let response = await readResponse(socket);
-  if (response.code !== 250) {
-    await writeCommand(socket, `HELO ${config.smtp.ehloHost}`);
-    response = await readResponse(socket);
-    if (response.code !== 250) throw new Error(`SMTP EHLO/HELO failed: ${response.lines.at(-1) ?? 'unknown'}`);
-  }
-
-  await authenticate(socket, config.smtp.user, config.smtp.pass);
-  await writeCommand(socket, `MAIL FROM:<${config.smtp.from}>`);
-  response = await readResponse(socket);
-  if (response.code !== 250) throw new Error(`SMTP MAIL FROM failed: ${response.lines.at(-1) ?? 'unknown'}`);
-
-  const recipients = rawMessage.match(/^To:\s*(.+)$/im)?.[1]?.split(',').map((value) => value.trim()).filter(Boolean) ?? [];
-  const ccRecipients = rawMessage.match(/^Cc:\s*(.+)$/im)?.[1]?.split(',').map((value) => value.trim()).filter(Boolean) ?? [];
-  for (const recipient of [...recipients, ...ccRecipients]) {
-    await writeCommand(socket, `RCPT TO:<${recipient}>`);
-    response = await readResponse(socket);
-    if (response.code !== 250 && response.code !== 251) {
-      throw new Error(`SMTP RCPT TO failed for ${recipient}: ${response.lines.at(-1) ?? 'unknown'}`);
+    await writeCommand(socket, `EHLO ${config.smtp.ehloHost}`);
+    let response = await readResponse(socket, SMTP_RESPONSE_TIMEOUT_MS);
+    if (response.code !== 250) {
+      await writeCommand(socket, `HELO ${config.smtp.ehloHost}`);
+      response = await readResponse(socket, SMTP_RESPONSE_TIMEOUT_MS);
+      if (response.code !== 250) throw new Error(`SMTP EHLO/HELO failed: ${response.lines.at(-1) ?? 'unknown'}`);
     }
+
+    await authenticate(socket, config.smtp.user, config.smtp.pass);
+    await writeCommand(socket, `MAIL FROM:<${config.smtp.from}>`);
+    response = await readResponse(socket, SMTP_RESPONSE_TIMEOUT_MS);
+    if (response.code !== 250) throw new Error(`SMTP MAIL FROM failed: ${response.lines.at(-1) ?? 'unknown'}`);
+
+    const recipients = rawMessage.match(/^To:\s*(.+)$/im)?.[1]?.split(',').map((value) => value.trim()).filter(Boolean) ?? [];
+    const ccRecipients = rawMessage.match(/^Cc:\s*(.+)$/im)?.[1]?.split(',').map((value) => value.trim()).filter(Boolean) ?? [];
+    for (const recipient of [...recipients, ...ccRecipients]) {
+      await writeCommand(socket, `RCPT TO:<${recipient}>`);
+      response = await readResponse(socket, SMTP_RESPONSE_TIMEOUT_MS);
+      if (response.code !== 250 && response.code !== 251) {
+        throw new Error(`SMTP RCPT TO failed for ${recipient}: ${response.lines.at(-1) ?? 'unknown'}`);
+      }
+    }
+
+    await writeCommand(socket, 'DATA');
+    response = await readResponse(socket, SMTP_RESPONSE_TIMEOUT_MS);
+    if (response.code !== 354) throw new Error(`SMTP DATA failed: ${response.lines.at(-1) ?? 'unknown'}`);
+
+    socket.write(`${rawMessage.replace(/\r?\n/g, '\r\n')}\r\n.\r\n`);
+    response = await readResponse(socket, SMTP_RESPONSE_TIMEOUT_MS);
+    if (response.code !== 250) throw new Error(`SMTP send failed: ${response.lines.at(-1) ?? 'unknown'}`);
+
+    await writeCommand(socket, 'QUIT');
+    await readResponse(socket, SMTP_RESPONSE_TIMEOUT_MS).catch(() => undefined);
+  } catch (error) {
+    destroySocket(socket, error instanceof Error ? error : undefined);
+    throw error;
+  } finally {
+    if (!socket.destroyed) socket.end();
   }
-
-  await writeCommand(socket, 'DATA');
-  response = await readResponse(socket);
-  if (response.code !== 354) throw new Error(`SMTP DATA failed: ${response.lines.at(-1) ?? 'unknown'}`);
-
-  socket.write(`${rawMessage.replace(/\r?\n/g, '\r\n')}\r\n.\r\n`);
-  response = await readResponse(socket);
-  if (response.code !== 250) throw new Error(`SMTP send failed: ${response.lines.at(-1) ?? 'unknown'}`);
-
-  await writeCommand(socket, 'QUIT');
-  await readResponse(socket).catch(() => undefined);
-  socket.end();
 }

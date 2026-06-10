@@ -6,61 +6,30 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { config } from './lib/config.js';
 import { createEmailService } from './lib/email-service.js';
+import { createRateLimiter, getClientRateLimitKey } from './lib/rate-limit.js';
 import { appendRawMessage, deleteEmail, getEmail, getUnreadCount, listFolders, listRecentEmails, moveEmail, searchEmails, updateEmailFlags } from './lib/imap.js';
 import { sendRawMessage } from './lib/smtp.js';
 
 const app = express();
-app.set('trust proxy', 1);
+app.set('trust proxy', config.trustProxy);
 app.use(express.json({ limit: '1mb' }));
 
-const requestCounters = new Map<string, { count: number; resetAt: number }>();
-
-type RateLimitOptions = {
-  windowMs: number;
-  limit: number;
-  keyFn: (req: express.Request) => string;
-  message: string;
-};
-
-function createRateLimit({ windowMs, limit, keyFn, message }: RateLimitOptions) {
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const key = keyFn(req);
-    const now = Date.now();
-    const current = requestCounters.get(key);
-
-    if (!current || now >= current.resetAt) {
-      requestCounters.set(key, { count: 1, resetAt: now + windowMs });
-      return next();
-    }
-
-    if (current.count >= limit) {
-      const retryAfterSeconds = Math.ceil((current.resetAt - now) / 1000);
-      res.setHeader('Retry-After', String(Math.max(retryAfterSeconds, 1)));
-      return res.status(429).json({ error: message });
-    }
-
-    current.count += 1;
-    requestCounters.set(key, current);
-    return next();
-  };
-}
-
-const globalRateLimit = createRateLimit({
+const globalRateLimit = createRateLimiter({
   windowMs: 60_000,
   limit: 60,
-  keyFn: (req) => req.ip ?? 'unknown-ip',
+  keyFn: (req) => getClientRateLimitKey(req, config.trustProxy),
   message: 'Too many requests. Please retry later.'
 });
 
-const mcpRateLimit = createRateLimit({
+const mcpRateLimit = createRateLimiter({
   windowMs: 60_000,
   limit: 30,
-  keyFn: (req) => `${req.ip ?? 'unknown-ip'}:${req.header('authorization') ?? 'anonymous'}`,
+  keyFn: (req) => `${getClientRateLimitKey(req, config.trustProxy)}:${req.header('authorization') ?? 'anonymous'}`,
   message: 'Rate limit exceeded for MCP endpoint.'
 });
 
-app.use(globalRateLimit);
-app.use(config.mcpPath, mcpRateLimit);
+app.use((req, res, next) => globalRateLimit.handle(req, res, next));
+app.use(config.mcpPath, (req, res, next) => mcpRateLimit.handle(req, res, next));
 
 app.use((req, res, next) => {
   if (req.path !== config.mcpPath) return next();
